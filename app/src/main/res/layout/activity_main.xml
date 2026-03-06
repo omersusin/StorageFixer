@@ -11,39 +11,63 @@
         android:text="StorageFixer"
         android:textSize="24sp"
         android:textStyle="bold"
-        android:layout_marginBottom="8dp" />
+        android:layout_marginBottom="4dp" />
 
     <TextView
         android:id="@+id/statusView"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Checking..."
-        android:textSize="16sp"
+        android:textSize="14sp"
         android:fontFamily="monospace"
         android:padding="12dp"
         android:background="#1A000000"
-        android:layout_marginBottom="12dp" />
+        android:layout_marginBottom="8dp" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginBottom="12dp">
+        android:layout_marginBottom="4dp">
 
         <Button
             android:id="@+id/btnFixAll"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Fix All"
+            android:text="🔧 Fix All"
             android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/btnDiagnose"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🔍 Diagnose"
+            android:layout_marginStart="4dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp">
 
         <Button
             android:id="@+id/btnRefreshLog"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Refresh"
+            android:text="🔄"
+            android:layout_marginEnd="4dp"
+            style="?attr/materialButtonOutlinedStyle" />
+
+        <Button
+            android:id="@+id/btnCopyLog"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="📋 Copy"
             android:layout_marginStart="4dp"
             android:layout_marginEnd="4dp"
             style="?attr/materialButtonOutlinedStyle" />
@@ -53,7 +77,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Clear"
+            android:text="🗑 Clear"
             android:layout_marginStart="4dp"
             style="?attr/materialButtonOutlinedStyle" />
     </LinearLayout>
@@ -70,8 +94,9 @@
             android:id="@+id/logView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="11sp"
+            android:textSize="10sp"
             android:fontFamily="monospace"
+            android:textIsSelectable="true"
             android:text="Loading..." />
     </ScrollView>
 </LinearLayout>

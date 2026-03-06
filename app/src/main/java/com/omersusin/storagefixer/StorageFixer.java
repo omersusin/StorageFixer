@@ -17,6 +17,21 @@ public class StorageFixer {
     private static final String DIR_PERM = "777";
     private static final String FILE_PERM = "666";
 
+    // Common subdirs apps expect to exist
+    private static final String[] SUBDIRS = {
+        "cache", "files", "no_backup", "shared_prefs",
+        "databases", "code_cache"
+    };
+
+    // Some apps use their own folders in sdcard root
+    private static final String[][] APP_EXTRA_DIRS = {
+        {"org.telegram.messenger", "/storage/emulated/0/Telegram"},
+        {"org.telegram.messenger.web", "/storage/emulated/0/Telegram"},
+        {"org.thunderdog.challegram", "/storage/emulated/0/Telegram"},
+        {"com.whatsapp", "/storage/emulated/0/WhatsApp"},
+        {"com.whatsapp.w4b", "/storage/emulated/0/WhatsApp Business"},
+    };
+
     public static boolean isRootAvailable() {
         return Shell.getShell().isRoot();
     }
@@ -38,31 +53,156 @@ public class StorageFixer {
     }
 
     public static FixResult fixPackage(String pkg) {
+        return fixPackage(pkg, false);
+    }
+
+    public static FixResult fixPackage(String pkg, boolean diagnose) {
         FixResult r = new FixResult(pkg);
-        r.dataOk = fixDir(BASE + "/data/" + pkg);
-        r.obbOk = fixDir(BASE + "/obb/" + pkg);
-        r.mediaOk = fixDir(BASE + "/media/" + pkg);
+
+        if (diagnose) {
+            FixerLog.divider();
+            FixerLog.i("🔍 DIAGNOSING: " + pkg);
+            logPackageInfo(pkg);
+        }
+
+        // Fix data dir
+        String dataPath = BASE + "/data/" + pkg;
+        if (diagnose) logDirState("BEFORE", dataPath);
+        r.dataOk = fixDir(dataPath, diagnose);
+        fixSubDirs(dataPath, diagnose);
+        if (diagnose) logDirState("AFTER", dataPath);
+
+        // Fix obb dir
+        String obbPath = BASE + "/obb/" + pkg;
+        if (diagnose) logDirState("BEFORE", obbPath);
+        r.obbOk = fixDir(obbPath, diagnose);
+        if (diagnose) logDirState("AFTER", obbPath);
+
+        // Fix media dir
+        String mediaPath = BASE + "/media/" + pkg;
+        if (diagnose) logDirState("BEFORE", mediaPath);
+        r.mediaOk = fixDir(mediaPath, diagnose);
+        if (diagnose) logDirState("AFTER", mediaPath);
+
+        // Fix app-specific extra dirs (e.g. /sdcard/Telegram)
+        fixExtraDirs(pkg, diagnose);
+
+        // Verify write test
+        if (diagnose) {
+            r.writeTestOk = testWrite(dataPath);
+            FixerLog.i("✏️ Write test " + dataPath + ": "
+                    + (r.writeTestOk ? "PASS" : "FAIL"));
+        }
+
         r.success = r.dataOk && r.obbOk && r.mediaOk;
+
         FixerLog.i((r.success ? "✓" : "✗") + " " + pkg
                 + " [data:" + (r.dataOk ? "ok" : "fail")
                 + " obb:" + (r.obbOk ? "ok" : "fail")
                 + " media:" + (r.mediaOk ? "ok" : "fail") + "]");
+
+        if (diagnose) FixerLog.divider();
         return r;
     }
 
-    private static boolean fixDir(String path) {
+    private static void logPackageInfo(String pkg) {
+        // Get package UID
+        Shell.Result uidRes = Shell.cmd(
+                "dumpsys package " + pkg + " | grep userId= | head -1").exec();
+        for (String line : uidRes.getOut()) {
+            FixerLog.d("  UID: " + line.trim());
+        }
+
+        // Get install location
+        Shell.Result pathRes = Shell.cmd("pm path " + pkg).exec();
+        for (String line : pathRes.getOut()) {
+            FixerLog.d("  Path: " + line.trim());
+        }
+
+        // Check granted permissions
+        Shell.Result permRes = Shell.cmd(
+                "dumpsys package " + pkg
+                + " | grep -A 50 'granted=true' | head -30").exec();
+        if (!permRes.getOut().isEmpty()) {
+            FixerLog.d("  Granted permissions:");
+            for (String line : permRes.getOut()) {
+                String t = line.trim();
+                if (t.contains("storage") || t.contains("STORAGE")
+                        || t.contains("READ_MEDIA") || t.contains("MANAGE")) {
+                    FixerLog.d("    " + t);
+                }
+            }
+        }
+
+        // Check mount namespace
+        Shell.Result mountRes = Shell.cmd(
+                "cat /proc/mounts | grep 'emulated' | head -5").exec();
+        FixerLog.d("  Relevant mounts:");
+        for (String line : mountRes.getOut()) {
+            FixerLog.d("    " + line.trim());
+        }
+    }
+
+    private static void logDirState(String label, String path) {
+        FixerLog.d("  [" + label + "] " + path);
+
+        // Check existence
+        Shell.Result exists = Shell.cmd(
+                "[ -d '" + path + "' ] && echo EXISTS || echo MISSING").exec();
+        String status = exists.getOut().isEmpty() ? "UNKNOWN"
+                : exists.getOut().get(0);
+        FixerLog.d("    Status: " + status);
+
+        if ("MISSING".equals(status)) return;
+
+        // Detailed permissions with ls -laZd
+        Shell.Result lsRes = Shell.cmd("ls -laZd '" + path + "'").exec();
+        for (String line : lsRes.getOut()) {
+            FixerLog.d("    Perms: " + line.trim());
+        }
+
+        // Stat output
+        Shell.Result statRes = Shell.cmd(
+                "stat -c 'mode=%a owner=%U:%G' '" + path + "' 2>/dev/null"
+                + " || stat '" + path + "' 2>/dev/null | head -4").exec();
+        for (String line : statRes.getOut()) {
+            FixerLog.d("    Stat: " + line.trim());
+        }
+
+        // SELinux context
+        Shell.Result conRes = Shell.cmd(
+                "ls -Zd '" + path + "' | awk '{print $1}'").exec();
+        for (String line : conRes.getOut()) {
+            FixerLog.d("    SEctx: " + line.trim());
+        }
+
+        // List subdirectories (first level only)
+        Shell.Result subRes = Shell.cmd(
+                "ls -laZ '" + path + "/' 2>/dev/null | head -20").exec();
+        if (!subRes.getOut().isEmpty()) {
+            FixerLog.d("    Contents:");
+            for (String line : subRes.getOut()) {
+                FixerLog.d("      " + line.trim());
+            }
+        }
+    }
+
+    private static boolean fixDir(String path, boolean diagnose) {
         String createCmd = String.join(" && ",
                 "mkdir -p '" + path + "'",
                 "chmod " + DIR_PERM + " '" + path + "'",
                 "chown " + OWNER + " '" + path + "'",
                 "chcon " + SECTX + " '" + path + "'");
 
+        if (diagnose) FixerLog.d("  CMD: " + createCmd);
+
         Shell.Result res = Shell.cmd(createCmd).exec();
         if (!res.isSuccess()) {
-            for (String e : res.getErr()) FixerLog.e("  " + e);
+            for (String e : res.getErr()) FixerLog.e("  ERR: " + e);
             return false;
         }
 
+        // Recursive fix for existing contents
         String recursiveCmd = String.join("; ",
                 "find '" + path + "' -type d -exec chmod " + DIR_PERM + " {} + 2>/dev/null",
                 "find '" + path + "' -type f -exec chmod " + FILE_PERM + " {} + 2>/dev/null",
@@ -70,12 +210,94 @@ public class StorageFixer {
                 "chcon -R " + SECTX + " '" + path + "' 2>/dev/null");
 
         Shell.cmd(recursiveCmd).exec();
+
+        if (diagnose) FixerLog.d("  Recursive fix applied: " + path);
         return true;
+    }
+
+    private static boolean fixDir(String path) {
+        return fixDir(path, false);
+    }
+
+    private static void fixSubDirs(String parentPath, boolean diagnose) {
+        for (String sub : SUBDIRS) {
+            String subPath = parentPath + "/" + sub;
+            String cmd = String.join(" && ",
+                    "mkdir -p '" + subPath + "'",
+                    "chmod " + DIR_PERM + " '" + subPath + "'",
+                    "chown " + OWNER + " '" + subPath + "'",
+                    "chcon " + SECTX + " '" + subPath + "'");
+            Shell.cmd(cmd).exec();
+            if (diagnose) FixerLog.d("  Subdir: " + sub + " → created");
+        }
+    }
+
+    private static void fixExtraDirs(String pkg, boolean diagnose) {
+        for (String[] entry : APP_EXTRA_DIRS) {
+            if (entry[0].equals(pkg)) {
+                String extraPath = entry[1];
+                if (diagnose) {
+                    FixerLog.i("  📂 Extra dir for " + pkg + ": " + extraPath);
+                    logDirState("BEFORE", extraPath);
+                }
+                fixDir(extraPath, diagnose);
+                if (diagnose) logDirState("AFTER", extraPath);
+            }
+        }
+    }
+
+    private static boolean testWrite(String path) {
+        String testFile = path + "/.storagefixer_test";
+        Shell.Result w = Shell.cmd(
+                "echo test > '" + testFile + "' && rm '" + testFile + "'").exec();
+        return w.isSuccess();
     }
 
     public static void forceStopPackage(String pkg) {
         Shell.cmd("am force-stop '" + pkg + "'").exec();
         FixerLog.i("⏹ Force stopped: " + pkg);
+    }
+
+    public static void diagnosePackage(Context ctx, String pkg) {
+        FixerLog.divider();
+        FixerLog.i("🏥 FULL DIAGNOSIS FOR: " + pkg);
+
+        // System info
+        Shell.Result sdkRes = Shell.cmd("getprop ro.build.version.sdk").exec();
+        Shell.Result romRes = Shell.cmd("getprop ro.build.display.id").exec();
+        Shell.Result kernRes = Shell.cmd("uname -r").exec();
+        FixerLog.i("  SDK: " + join(sdkRes.getOut()));
+        FixerLog.i("  ROM: " + join(romRes.getOut()));
+        FixerLog.i("  Kernel: " + join(kernRes.getOut()));
+
+        // Check if FUSE or sdcardfs
+        Shell.Result fsRes = Shell.cmd(
+                "mount | grep emulated | head -3").exec();
+        FixerLog.i("  Storage filesystem:");
+        for (String line : fsRes.getOut()) {
+            FixerLog.i("    " + line.trim());
+        }
+
+        // Check root method
+        Shell.Result magiskRes = Shell.cmd("magisk -v 2>/dev/null").exec();
+        Shell.Result ksuRes = Shell.cmd("ksud -v 2>/dev/null || ksu -v 2>/dev/null").exec();
+        FixerLog.i("  Magisk: " + join(magiskRes.getOut()));
+        FixerLog.i("  KernelSU: " + join(ksuRes.getOut()));
+
+        // Now fix with full diagnostics
+        fixPackage(pkg, true);
+
+        // After fix, verify from app's perspective
+        Shell.Result verifyRes = Shell.cmd(
+                "run-as " + pkg + " ls -la /storage/emulated/0/Android/data/"
+                + pkg + "/ 2>&1 || echo 'run-as failed (normal for release apps)'"
+        ).exec();
+        FixerLog.i("  App-perspective check:");
+        for (String line : verifyRes.getOut()) {
+            FixerLog.d("    " + line.trim());
+        }
+
+        FixerLog.divider();
     }
 
     public static List<FixResult> fixAll(Context ctx) {
@@ -95,9 +317,16 @@ public class StorageFixer {
         return results;
     }
 
+    private static String join(List<String> list) {
+        if (list == null || list.isEmpty()) return "(empty)";
+        StringBuilder sb = new StringBuilder();
+        for (String s : list) sb.append(s).append(" ");
+        return sb.toString().trim();
+    }
+
     public static class FixResult {
         public String packageName;
-        public boolean dataOk, obbOk, mediaOk, success;
+        public boolean dataOk, obbOk, mediaOk, writeTestOk, success;
 
         FixResult(String pkg) { this.packageName = pkg; }
 
@@ -106,7 +335,8 @@ public class StorageFixer {
             return (success ? "✓" : "✗") + " " + packageName
                     + " [data:" + (dataOk ? "ok" : "fail")
                     + " obb:" + (obbOk ? "ok" : "fail")
-                    + " media:" + (mediaOk ? "ok" : "fail") + "]";
+                    + " media:" + (mediaOk ? "ok" : "fail")
+                    + " write:" + (writeTestOk ? "ok" : "fail") + "]";
         }
     }
 }

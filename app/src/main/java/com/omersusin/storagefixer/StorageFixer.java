@@ -14,7 +14,8 @@ public class StorageFixer {
     private static final String BASE = "/storage/emulated/0/Android";
     private static final String OWNER = "media_rw:media_rw";
     private static final String SECTX = "u:object_r:media_rw_data_file:s0";
-    private static final String PERM = "777";
+    private static final String DIR_PERM = "777";
+    private static final String FILE_PERM = "666";
 
     public static boolean isRootAvailable() {
         return Shell.getShell().isRoot();
@@ -40,23 +41,41 @@ public class StorageFixer {
         FixResult r = new FixResult(pkg);
         r.dataOk = fixDir(BASE + "/data/" + pkg);
         r.obbOk = fixDir(BASE + "/obb/" + pkg);
-        r.success = r.dataOk && r.obbOk;
-        FixerLog.i((r.success ? "✓" : "✗") + " " + pkg);
+        r.mediaOk = fixDir(BASE + "/media/" + pkg);
+        r.success = r.dataOk && r.obbOk && r.mediaOk;
+        FixerLog.i((r.success ? "✓" : "✗") + " " + pkg
+                + " [data:" + (r.dataOk ? "ok" : "fail")
+                + " obb:" + (r.obbOk ? "ok" : "fail")
+                + " media:" + (r.mediaOk ? "ok" : "fail") + "]");
         return r;
     }
 
     private static boolean fixDir(String path) {
-        String cmd = String.join(" && ",
+        String createCmd = String.join(" && ",
                 "mkdir -p '" + path + "'",
-                "chmod " + PERM + " '" + path + "'",
+                "chmod " + DIR_PERM + " '" + path + "'",
                 "chown " + OWNER + " '" + path + "'",
                 "chcon " + SECTX + " '" + path + "'");
 
-        Shell.Result res = Shell.cmd(cmd).exec();
+        Shell.Result res = Shell.cmd(createCmd).exec();
         if (!res.isSuccess()) {
             for (String e : res.getErr()) FixerLog.e("  " + e);
+            return false;
         }
-        return res.isSuccess();
+
+        String recursiveCmd = String.join("; ",
+                "find '" + path + "' -type d -exec chmod " + DIR_PERM + " {} + 2>/dev/null",
+                "find '" + path + "' -type f -exec chmod " + FILE_PERM + " {} + 2>/dev/null",
+                "chown -R " + OWNER + " '" + path + "' 2>/dev/null",
+                "chcon -R " + SECTX + " '" + path + "' 2>/dev/null");
+
+        Shell.cmd(recursiveCmd).exec();
+        return true;
+    }
+
+    public static void forceStopPackage(String pkg) {
+        Shell.cmd("am force-stop '" + pkg + "'").exec();
+        FixerLog.i("⏹ Force stopped: " + pkg);
     }
 
     public static List<FixResult> fixAll(Context ctx) {
@@ -78,7 +97,7 @@ public class StorageFixer {
 
     public static class FixResult {
         public String packageName;
-        public boolean dataOk, obbOk, success;
+        public boolean dataOk, obbOk, mediaOk, success;
 
         FixResult(String pkg) { this.packageName = pkg; }
 
@@ -86,7 +105,8 @@ public class StorageFixer {
         public String toString() {
             return (success ? "✓" : "✗") + " " + packageName
                     + " [data:" + (dataOk ? "ok" : "fail")
-                    + " obb:" + (obbOk ? "ok" : "fail") + "]";
+                    + " obb:" + (obbOk ? "ok" : "fail")
+                    + " media:" + (mediaOk ? "ok" : "fail") + "]";
         }
     }
 }

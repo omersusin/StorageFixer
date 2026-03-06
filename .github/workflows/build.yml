@@ -24,6 +24,94 @@ jobs:
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Create Xposed API JAR
+        run: |
+          mkdir -p /tmp/xposed/de/robv/android/xposed/callbacks
+          
+          cat > /tmp/xposed/de/robv/android/xposed/IXposedHookLoadPackage.java << 'JAVA'
+          package de.robv.android.xposed;
+          import de.robv.android.xposed.callbacks.XC_LoadPackage;
+          public interface IXposedHookLoadPackage {
+              void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable;
+          }
+          JAVA
+          
+          cat > /tmp/xposed/de/robv/android/xposed/XC_MethodHook.java << 'JAVA'
+          package de.robv.android.xposed;
+          import java.lang.reflect.Member;
+          public abstract class XC_MethodHook {
+              public XC_MethodHook() {}
+              protected void beforeHookedMethod(MethodHookParam param) throws Throwable {}
+              protected void afterHookedMethod(MethodHookParam param) throws Throwable {}
+              public static class MethodHookParam {
+                  public Member method;
+                  public Object thisObject;
+                  public Object[] args;
+                  private Object result;
+                  private Throwable throwable;
+                  public Object getResult() { return result; }
+                  public void setResult(Object result) { this.result = result; }
+                  public Throwable getThrowable() { return throwable; }
+                  public void setThrowable(Throwable throwable) { this.throwable = throwable; }
+              }
+              public static class Unhook {
+                  public void unhook() {}
+              }
+          }
+          JAVA
+          
+          cat > /tmp/xposed/de/robv/android/xposed/XposedBridge.java << 'JAVA'
+          package de.robv.android.xposed;
+          import java.lang.reflect.Member;
+          public final class XposedBridge {
+              public static void log(String text) {}
+              public static void log(Throwable t) {}
+              public static XC_MethodHook.Unhook hookMethod(Member hookMethod, XC_MethodHook callback) { return null; }
+              public static Object invokeOriginalMethod(Member method, Object thisObject, Object[] args) throws Throwable { return null; }
+          }
+          JAVA
+          
+          cat > /tmp/xposed/de/robv/android/xposed/XposedHelpers.java << 'JAVA'
+          package de.robv.android.xposed;
+          import java.lang.reflect.Field;
+          public final class XposedHelpers {
+              public static XC_MethodHook.Unhook findAndHookMethod(String className, ClassLoader classLoader, String methodName, Object... parameterTypesAndCallback) { return null; }
+              public static XC_MethodHook.Unhook findAndHookMethod(Class<?> clazz, String methodName, Object... parameterTypesAndCallback) { return null; }
+              public static Class<?> findClass(String className, ClassLoader classLoader) { return null; }
+              public static Field findField(Class<?> clazz, String fieldName) { return null; }
+              public static Object getObjectField(Object obj, String fieldName) { return null; }
+              public static void setObjectField(Object obj, String fieldName, Object value) {}
+              public static Object callMethod(Object obj, String methodName, Object... args) { return null; }
+              public static Object callStaticMethod(Class<?> clazz, String methodName, Object... args) { return null; }
+          }
+          JAVA
+          
+          cat > /tmp/xposed/de/robv/android/xposed/callbacks/XC_LoadPackage.java << 'JAVA'
+          package de.robv.android.xposed.callbacks;
+          import android.content.pm.ApplicationInfo;
+          public abstract class XC_LoadPackage {
+              public static class LoadPackageParam {
+                  public String packageName;
+                  public String processName;
+                  public ClassLoader classLoader;
+                  public ApplicationInfo appInfo;
+                  public boolean isFirstApplication;
+              }
+          }
+          JAVA
+          
+          cd /tmp/xposed
+          javac -source 17 -target 17 -cp "$ANDROID_HOME/platforms/android-35/android.jar" \
+            de/robv/android/xposed/callbacks/XC_LoadPackage.java \
+            de/robv/android/xposed/XC_MethodHook.java \
+            de/robv/android/xposed/XposedBridge.java \
+            de/robv/android/xposed/XposedHelpers.java \
+            de/robv/android/xposed/IXposedHookLoadPackage.java
+          
+          jar cf $GITHUB_WORKSPACE/app/libs/xposed-api.jar de/
+          echo "Xposed API JAR created:"
+          jar tf $GITHUB_WORKSPACE/app/libs/xposed-api.jar
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:

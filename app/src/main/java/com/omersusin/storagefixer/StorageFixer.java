@@ -8,6 +8,7 @@ import com.topjohnwu.superuser.Shell;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 public class StorageFixer {
 
@@ -249,12 +250,19 @@ public class StorageFixer {
         int fixedDirs = 0;
         int fixedAppops = 0;
         int skipped = 0;
+        int ignored = 0;
         List<String> fixedPkgs = new ArrayList<>();
+        Set<String> ignoredApps = IgnoredAppsManager.getIgnoredApps(ctx);
 
         for (ApplicationInfo app : apps) {
             if ((app.flags & ApplicationInfo.FLAG_SYSTEM) != 0) continue;
             String pkg = app.packageName;
             if (pkg.equals(ctx.getPackageName())) continue;
+
+            if (ignoredApps.contains(pkg)) {
+                ignored++;
+                continue;
+            }
 
             boolean dirsBroken = needsFix(pkg);
             boolean appopsBroken = needsAppopsFix(pkg);
@@ -289,7 +297,8 @@ public class StorageFixer {
 
         FixerLog.i("Done: " + fixedDirs + " dirs fixed, "
                 + fixedAppops + " appops fixed, "
-                + skipped + " already OK");
+                + skipped + " already OK, "
+                + ignored + " ignored");
         return results;
     }
 
@@ -331,31 +340,40 @@ public class StorageFixer {
         FixerLog.i("Needs dir fix: " + (needsFix(pkg) ? "YES" : "NO"));
         FixerLog.i("Needs appops fix: " + (needsAppopsFix(pkg) ? "YES" : "NO"));
 
+        boolean isIgnored = IgnoredAppsManager.isIgnored(ctx, pkg);
+        if (isIgnored) {
+            FixerLog.w("WARNING: " + pkg + " is in the Ignored Apps list — skipping fix");
+        }
+
         FixerLog.i("=== CURRENT STATE ===");
         for (String type : DIR_TYPES) {
             logDirState("LOWER", LOWER + "/" + type + "/" + pkg);
             logDirState("FUSE", FUSE + "/" + type + "/" + pkg);
         }
 
-        FixerLog.i("=== APPLYING FIX ===");
-        fixPackage(ctx, pkg, true);
+        if (isIgnored) {
+            FixerLog.i("=== FIX SKIPPED (app is ignored) ===");
+        } else {
+            FixerLog.i("=== APPLYING FIX ===");
+            fixPackage(ctx, pkg, true);
 
-        forceStopPackage(pkg);
+            forceStopPackage(pkg);
 
-        try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+            try { Thread.sleep(3000); } catch (InterruptedException e) { /* ignored */ }
 
-        FixerLog.i("=== POST-FIX (3s after force-stop) ===");
-        for (String type : DIR_TYPES) {
-            logDirState("LOWER-FINAL", LOWER + "/" + type + "/" + pkg);
-            logDirState("FUSE-FINAL", FUSE + "/" + type + "/" + pkg);
-        }
+            FixerLog.i("=== POST-FIX (3s after force-stop) ===");
+            for (String type : DIR_TYPES) {
+                logDirState("LOWER-FINAL", LOWER + "/" + type + "/" + pkg);
+                logDirState("FUSE-FINAL", FUSE + "/" + type + "/" + pkg);
+            }
 
-        FixerLog.i("=== FINAL WRITE TESTS ===");
-        for (String type : DIR_TYPES) {
-            boolean lower = testWrite(LOWER + "/" + type + "/" + pkg);
-            boolean fuse = testWrite(FUSE + "/" + type + "/" + pkg);
-            FixerLog.i("  " + type + ": lower=" + (lower ? "PASS" : "FAIL")
-                    + " fuse=" + (fuse ? "PASS" : "FAIL"));
+            FixerLog.i("=== FINAL WRITE TESTS ===");
+            for (String type : DIR_TYPES) {
+                boolean lower = testWrite(LOWER + "/" + type + "/" + pkg);
+                boolean fuse = testWrite(FUSE + "/" + type + "/" + pkg);
+                FixerLog.i("  " + type + ": lower=" + (lower ? "PASS" : "FAIL")
+                        + " fuse=" + (fuse ? "PASS" : "FAIL"));
+            }
         }
 
         FixerLog.divider();

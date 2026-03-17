@@ -14,6 +14,11 @@ public class PackageReceiver extends BroadcastReceiver {
         if (pkg == null) return;
         if (pkg.equals(context.getPackageName())) return;
 
+        if (IgnoredAppsManager.isIgnored(context, pkg)) {
+            FixerLog.i("Skipping ignored app: " + pkg);
+            return;
+        }
+
         FixerLog.i("Package event: " + intent.getAction() + " -> " + pkg);
 
         PendingResult pending = goAsync();

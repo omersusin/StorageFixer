@@ -34,6 +34,7 @@ public class MainActivity extends AppCompatActivity {
         Button btnRefresh = findViewById(R.id.btnRefreshLog);
         Button btnCopy = findViewById(R.id.btnCopyLog);
         Button btnClear = findViewById(R.id.btnClearLog);
+        Button btnIgnored = findViewById(R.id.btnIgnoredApps);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -66,6 +67,11 @@ public class MainActivity extends AppCompatActivity {
         btnClear.setOnClickListener(v -> {
             FixerLog.clear();
             logView.setText("Log cleared.");
+        });
+
+        btnIgnored.setOnClickListener(v -> {
+            Intent ignoredIntent = new Intent(this, IgnoredAppsActivity.class);
+            startActivity(ignoredIntent);
         });
 
         checkStatus();

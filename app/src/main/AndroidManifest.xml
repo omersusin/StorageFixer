@@ -38,6 +38,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".IgnoredAppsActivity"
+            android:exported="false"
+            android:label="Ignored Apps" />
+
         <service
             android:name=".FixerService"
             android:exported="false"

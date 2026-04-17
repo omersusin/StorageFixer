@@ -82,6 +82,14 @@
             style="?attr/materialButtonOutlinedStyle" />
     </LinearLayout>
 
+    <Button
+        android:id="@+id/btnIgnoredApps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Ignored Apps"
+        android:layout_marginBottom="8dp"
+        style="?attr/materialButtonOutlinedStyle" />
+
     <ScrollView
         android:id="@+id/scrollView"
         android:layout_width="match_parent"

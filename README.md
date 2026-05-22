@@ -4,6 +4,8 @@
 
 [![Build](https://github.com/omersusin/StorageFixer/actions/workflows/build.yml/badge.svg)](https://github.com/omersusin/StorageFixer/actions/workflows/build.yml)
 
+![GitHub Downloads](https://img.shields.io/github/downloads/omersusin/StorageFixer/total.svg)
+
 ---
 
 ## The Problem

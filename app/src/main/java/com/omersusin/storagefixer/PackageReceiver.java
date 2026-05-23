@@ -29,7 +29,7 @@ public class PackageReceiver extends BroadcastReceiver {
                 Thread.sleep(10000);
 
                 // Fix directories if needed
-                if (StorageFixer.needsFix(pkg)) {
+                if (StorageFixer.needsFix(context, pkg)) {
                     FixerLog.i("Fixing dirs for " + pkg);
                     StorageFixer.fixPackage(context, pkg);
                 }

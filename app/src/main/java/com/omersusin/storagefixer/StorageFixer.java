@@ -49,9 +49,66 @@ public class StorageFixer {
         }
     }
 
+    private static boolean requestsPermission(Context ctx, String pkg, String permission) {
+        try {
+            android.content.pm.PackageInfo info = ctx.getPackageManager()
+                    .getPackageInfo(pkg, PackageManager.GET_PERMISSIONS);
+            if (info.requestedPermissions != null) {
+                for (String p : info.requestedPermissions) {
+                    if (p.equals(permission)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private static boolean isLegacyStorageApp(Context ctx, String pkg) {
+        try {
+            ApplicationInfo info = ctx.getPackageManager()
+                    .getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(0));
+            // Telltale 1: targetSdkVersion < 30 (Legacy Storage by default)
+            if (info.targetSdkVersion < 30) {
+                return true;
+            }
+            // Telltale 2: requested legacy external storage flag (via reflection to be compile-safe)
+            try {
+                java.lang.reflect.Field field = ApplicationInfo.class.getDeclaredField("privateFlags");
+                int privateFlags = (Integer) field.get(info);
+                if ((privateFlags & (1 << 25)) != 0) { // PRIVATE_FLAG_REQUEST_LEGACY_EXTERNAL_STORAGE = 1 << 25
+                    return true;
+                }
+            } catch (Exception ignored) {}
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private static String getCustomDirName(String pkg) {
+        if (pkg.equals("idm.internet.download.manager.plus")) {
+            return "idmp";
+        }
+        String suffix = pkg.substring(pkg.lastIndexOf('.') + 1);
+        if (suffix.equalsIgnoreCase("android") || suffix.equalsIgnoreCase("plus") || suffix.length() < 3) {
+            return pkg.replace(".", "_");
+        }
+        return suffix;
+    }
+
     // ========== CHECK IF NEEDS FIX ==========
 
-    public static boolean needsFix(String pkg) {
+    public static boolean needsFix(Context ctx, String pkg) {
+        if (isLegacyStorageApp(ctx, pkg)) {
+            String customDir = getCustomDirName(pkg);
+            String customPath = "/data/media/0/" + customDir;
+            Shell.Result exists = Shell.cmd(
+                "[ -d '" + customPath + "' ] && echo Y || echo N"
+            ).exec();
+            if (exists.getOut().isEmpty() || "N".equals(exists.getOut().get(0))) {
+                return true;
+            }
+        }
+
         for (String type : DIR_TYPES) {
             String lowerPath = LOWER + "/" + type + "/" + pkg;
             Shell.Result exists = Shell.cmd(
@@ -74,23 +131,35 @@ public class StorageFixer {
 
     // ========== CHECK IF NEEDS APPOPS FIX ==========
 
-    private static boolean needsAppopsFix(String pkg) {
+    private static boolean needsAppopsFix(Context ctx, String pkg) {
+        if (isLegacyStorageApp(ctx, pkg)) {
+            Shell.Result res = Shell.cmd("appops get --uid " + pkg + " LEGACY_STORAGE 2>/dev/null").exec();
+            if (!res.getOut().isEmpty()) {
+                String out = res.getOut().get(0);
+                if (!out.contains("allow")) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+
+            Shell.Result res2 = Shell.cmd("appops get --uid " + pkg + " NO_ISOLATED_STORAGE 2>/dev/null").exec();
+            if (!res2.getOut().isEmpty()) {
+                String out = res2.getOut().get(0);
+                if (!out.contains("allow")) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+
         Shell.Result res = Shell.cmd(
             "appops get " + pkg + " LEGACY_STORAGE 2>/dev/null"
         ).exec();
         if (!res.getOut().isEmpty()) {
             String out = res.getOut().get(0);
-            if (out.contains("deny") || out.contains("ignore") || out.contains("default")) {
-                return true;
-            }
-        }
-
-        Shell.Result res2 = Shell.cmd(
-            "appops get " + pkg + " MANAGE_EXTERNAL_STORAGE 2>/dev/null"
-        ).exec();
-        if (!res2.getOut().isEmpty()) {
-            String out = res2.getOut().get(0);
-            if (out.contains("deny") || out.contains("ignore") || out.contains("default")) {
+            if (out.contains("deny") || out.contains("ignore")) {
                 return true;
             }
         }
@@ -143,6 +212,37 @@ public class StorageFixer {
 
         // Fix appops (FileProvider + storage access)
         fixAppops(pkg);
+
+        // Targeted fix for Legacy Storage Apps (including IDM+)
+        if (isLegacyStorageApp(ctx, pkg)) {
+            FixerLog.i("Applying legacy storage fix for " + pkg + "...");
+            
+            // Set AppOps at the UID level explicitly (so it doesn't get wiped/ignored)
+            Shell.cmd("appops set --uid " + pkg + " LEGACY_STORAGE allow").exec();
+            Shell.cmd("appops set --uid " + pkg + " NO_ISOLATED_STORAGE allow").exec();
+            Shell.cmd("appops set " + pkg + " LEGACY_STORAGE allow").exec();
+            Shell.cmd("appops set " + pkg + " NO_ISOLATED_STORAGE allow").exec();
+            
+            // Grant runtime storage permissions via PM
+            Shell.cmd("pm grant " + pkg + " android.permission.READ_EXTERNAL_STORAGE 2>/dev/null").exec();
+            Shell.cmd("pm grant " + pkg + " android.permission.WRITE_EXTERNAL_STORAGE 2>/dev/null").exec();
+
+            // Create and permission the custom legacy directory (lower FS path)
+            String customDir = getCustomDirName(pkg);
+            String customPath = "/data/media/0/" + customDir;
+            Shell.cmd("mkdir -p " + customPath).exec();
+            Shell.cmd("chown " + owner + " " + customPath).exec();
+            Shell.cmd("chmod 777 " + customPath).exec();
+            Shell.cmd("chcon u:object_r:media_rw_data_file:s0 " + customPath + " 2>/dev/null").exec();
+
+            // Ensure /sdcard/Download/ is fully writeable (lower FS path is /data/media/0/Download)
+            String downloadPath = "/data/media/0/Download";
+            Shell.cmd("mkdir -p " + downloadPath).exec();
+            Shell.cmd("chmod 777 " + downloadPath).exec();
+            Shell.cmd("chcon u:object_r:media_rw_data_file:s0 " + downloadPath + " 2>/dev/null").exec();
+            
+            FixerLog.i("Legacy storage fix complete for " + pkg);
+        }
 
         if (diagnose) {
             FixerLog.i("=== FUSE VERIFICATION ===");
@@ -264,8 +364,8 @@ public class StorageFixer {
                 continue;
             }
 
-            boolean dirsBroken = needsFix(pkg);
-            boolean appopsBroken = needsAppopsFix(pkg);
+            boolean dirsBroken = needsFix(ctx, pkg);
+            boolean appopsBroken = needsAppopsFix(ctx, pkg);
 
             if (!dirsBroken && !appopsBroken) {
                 skipped++;
@@ -337,8 +437,8 @@ public class StorageFixer {
 
         int uid = getAppUid(ctx, pkg);
         FixerLog.i("App UID: " + uid);
-        FixerLog.i("Needs dir fix: " + (needsFix(pkg) ? "YES" : "NO"));
-        FixerLog.i("Needs appops fix: " + (needsAppopsFix(pkg) ? "YES" : "NO"));
+        FixerLog.i("Needs dir fix: " + (needsFix(ctx, pkg) ? "YES" : "NO"));
+        FixerLog.i("Needs appops fix: " + (needsAppopsFix(ctx, pkg) ? "YES" : "NO"));
 
         boolean isIgnored = IgnoredAppsManager.isIgnored(ctx, pkg);
         if (isIgnored) {

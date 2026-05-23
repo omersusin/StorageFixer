@@ -30,6 +30,10 @@ public class XposedModule implements IXposedHookLoadPackage {
             return;
         }
 
+        if (lpparam.packageName.equals("idm.internet.download.manager.plus")) {
+            XposedBridge.log(TAG + ": Loaded into IDM+ package: " + lpparam.packageName);
+        }
+
         // Try to hook FileProvider in every app (scoped via LSPosed)
         hookFileProvider(lpparam);
         hookFileProviderCompat(lpparam);

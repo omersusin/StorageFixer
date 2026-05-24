@@ -76,7 +76,13 @@ public class StorageFixer {
             try {
                 java.lang.reflect.Field field = ApplicationInfo.class.getDeclaredField("privateFlags");
                 int privateFlags = (Integer) field.get(info);
-                if ((privateFlags & (1 << 25)) != 0) { // PRIVATE_FLAG_REQUEST_LEGACY_EXTERNAL_STORAGE = 1 << 25
+                int flag = 1 << 29; // Fallback to 1 << 29 (PRIVATE_FLAG_REQUEST_LEGACY_EXTERNAL_STORAGE)
+                try {
+                    java.lang.reflect.Field constField = ApplicationInfo.class.getDeclaredField("PRIVATE_FLAG_REQUEST_LEGACY_EXTERNAL_STORAGE");
+                    constField.setAccessible(true);
+                    flag = constField.getInt(null);
+                } catch (Exception ignored) {}
+                if ((privateFlags & flag) != 0) {
                     return true;
                 }
             } catch (Exception ignored) {}
@@ -300,20 +306,22 @@ public class StorageFixer {
         Shell.cmd("chown " + owner + " '" + path + "'").exec();
         Shell.cmd("chmod 777 '" + path + "'").exec();
 
-        Shell.Result chcon = Shell.cmd(
-            "chcon u:object_r:media_rw_data_file:s0 '" + path + "'"
-        ).exec();
+        String context = "u:object_r:media_rw_data_file:s0";
+        Shell.Result chcon = Shell.cmd("chcon " + context + " '" + path + "'").exec();
         if (!chcon.isSuccess()) {
             String[] alts = {"u:object_r:media_data_file:s0", "u:object_r:fuse:s0"};
             for (String alt : alts) {
                 if (Shell.cmd("chcon " + alt + " '" + path + "'").exec().isSuccess()) {
+                    context = alt;
                     if (diagnose) FixerLog.i("  chcon OK: " + alt);
                     break;
                 }
             }
         }
 
+        Shell.cmd("chcon -R " + context + " '" + path + "' 2>/dev/null").exec();
         Shell.cmd("chown -R " + owner + " '" + path + "' 2>/dev/null").exec();
+        Shell.cmd("chmod -R 777 '" + path + "' 2>/dev/null").exec();
 
         if (diagnose) logDirState("AFTER", path);
 

@@ -6,5 +6,9 @@
         <item>com.whatsapp</item>
         <item>com.instagram.android</item>
         <item>idm.internet.download.manager.plus</item>
+        <item>tw.nekomimi.nekogram</item>
+        <item>org.telegram.plus</item>
+        <item>com.ext.telegram</item>
+        <item>app.komikku</item>
     </string-array>
 </resources>

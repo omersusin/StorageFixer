@@ -17,8 +17,34 @@ public class IgnoredAppsManager {
 
     private static final String PREFS_NAME = "ignored_apps_prefs";
     private static final String KEY_IGNORED = "ignored_packages";
+    private static final String KEY_WHITELIST_MODE = "whitelist_mode";
 
     private IgnoredAppsManager() {}
+
+    /**
+     * Checks whether Whitelist Mode is active.
+     */
+    public static boolean isWhitelistMode(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return prefs.getBoolean(KEY_WHITELIST_MODE, false);
+    }
+
+    /**
+     * Toggles Whitelist Mode state.
+     */
+    public static void setWhitelistMode(Context context, boolean whitelistMode) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean(KEY_WHITELIST_MODE, whitelistMode).apply();
+    }
+
+    /**
+     * Checks whether a package should be ignored based on the list and current whitelist mode.
+     */
+    public static boolean shouldIgnore(Context context, String packageName) {
+        boolean selected = isIgnored(context, packageName);
+        boolean whitelist = isWhitelistMode(context);
+        return whitelist ? !selected : selected;
+    }
 
     /**
      * Returns an unmodifiable set of currently ignored package names.

@@ -15,6 +15,7 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SearchView;
+import androidx.appcompat.widget.SwitchCompat;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,11 +26,27 @@ public class IgnoredAppsActivity extends AppCompatActivity {
 
     private AppListAdapter adapter;
     private List<AppEntry> allApps;
+    private TextView titleView;
+    private TextView descriptionView;
+    private SwitchCompat whitelistSwitch;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_ignored_apps);
+
+        titleView = findViewById(R.id.titleView);
+        descriptionView = findViewById(R.id.descriptionView);
+        whitelistSwitch = findViewById(R.id.whitelistSwitch);
+
+        boolean isWhitelist = IgnoredAppsManager.isWhitelistMode(this);
+        whitelistSwitch.setChecked(isWhitelist);
+        updateTexts(isWhitelist);
+
+        whitelistSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            IgnoredAppsManager.setWhitelistMode(IgnoredAppsActivity.this, isChecked);
+            updateTexts(isChecked);
+        });
 
         ListView listView = findViewById(R.id.appListView);
         SearchView searchView = findViewById(R.id.searchView);
@@ -51,6 +68,16 @@ public class IgnoredAppsActivity extends AppCompatActivity {
                 return true;
             }
         });
+    }
+
+    private void updateTexts(boolean whitelistMode) {
+        if (whitelistMode) {
+            titleView.setText("Whitelist Apps");
+            descriptionView.setText("Only checked apps will be processed.\nAll other apps will be ignored during fix operations.");
+        } else {
+            titleView.setText("Ignored Apps");
+            descriptionView.setText("Checked apps will be skipped during fix operations.\nUse this for apps where LEGACY_STORAGE breaks media permissions.");
+        }
     }
 
     private List<AppEntry> loadInstalledApps() {

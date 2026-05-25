@@ -14,7 +14,7 @@ public class PackageReceiver extends BroadcastReceiver {
         if (pkg == null) return;
         if (pkg.equals(context.getPackageName())) return;
 
-        if (IgnoredAppsManager.isIgnored(context, pkg)) {
+        if (IgnoredAppsManager.shouldIgnore(context, pkg)) {
             FixerLog.i("Skipping ignored app: " + pkg);
             return;
         }

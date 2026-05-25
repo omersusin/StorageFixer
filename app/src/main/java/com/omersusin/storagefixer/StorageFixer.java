@@ -252,6 +252,7 @@ public class StorageFixer {
         int skipped = 0;
         int ignored = 0;
         List<String> fixedPkgs = new ArrayList<>();
+        boolean whitelistMode = IgnoredAppsManager.isWhitelistMode(ctx);
         Set<String> ignoredApps = IgnoredAppsManager.getIgnoredApps(ctx);
 
         for (ApplicationInfo app : apps) {
@@ -259,7 +260,9 @@ public class StorageFixer {
             String pkg = app.packageName;
             if (pkg.equals(ctx.getPackageName())) continue;
 
-            if (ignoredApps.contains(pkg)) {
+            boolean isSelected = ignoredApps.contains(pkg);
+            boolean shouldIgnore = whitelistMode ? !isSelected : isSelected;
+            if (shouldIgnore) {
                 ignored++;
                 continue;
             }
@@ -340,9 +343,9 @@ public class StorageFixer {
         FixerLog.i("Needs dir fix: " + (needsFix(pkg) ? "YES" : "NO"));
         FixerLog.i("Needs appops fix: " + (needsAppopsFix(pkg) ? "YES" : "NO"));
 
-        boolean isIgnored = IgnoredAppsManager.isIgnored(ctx, pkg);
-        if (isIgnored) {
-            FixerLog.w("WARNING: " + pkg + " is in the Ignored Apps list — skipping fix");
+        boolean shouldIgnore = IgnoredAppsManager.shouldIgnore(ctx, pkg);
+        if (shouldIgnore) {
+            FixerLog.w("WARNING: " + pkg + " is ignored — skipping fix");
         }
 
         FixerLog.i("=== CURRENT STATE ===");
@@ -351,7 +354,7 @@ public class StorageFixer {
             logDirState("FUSE", FUSE + "/" + type + "/" + pkg);
         }
 
-        if (isIgnored) {
+        if (shouldIgnore) {
             FixerLog.i("=== FIX SKIPPED (app is ignored) ===");
         } else {
             FixerLog.i("=== APPLYING FIX ===");

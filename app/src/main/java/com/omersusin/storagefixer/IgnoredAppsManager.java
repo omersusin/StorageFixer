@@ -38,10 +38,10 @@ public class IgnoredAppsManager {
     }
 
     /**
-     * Checks whether a package should be ignored based on the list and current whitelist mode.
+     * Checks whether a specific package is in the ignored list (considering Whitelist Mode).
      */
-    public static boolean shouldIgnore(Context context, String packageName) {
-        boolean selected = isIgnored(context, packageName);
+    public static boolean isIgnored(Context context, String packageName) {
+        boolean selected = getIgnoredApps(context).contains(packageName);
         boolean whitelist = isWhitelistMode(context);
         return whitelist ? !selected : selected;
     }
@@ -55,13 +55,6 @@ public class IgnoredAppsManager {
         if (stored == null) return Collections.emptySet();
         // Return a copy -- getStringSet may return a reference that shouldn't be modified
         return Collections.unmodifiableSet(new HashSet<>(stored));
-    }
-
-    /**
-     * Checks whether a specific package is in the ignored list.
-     */
-    public static boolean isIgnored(Context context, String packageName) {
-        return getIgnoredApps(context).contains(packageName);
     }
 
     /**

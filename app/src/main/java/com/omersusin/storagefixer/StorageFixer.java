@@ -471,8 +471,8 @@ public class StorageFixer {
             if (pkg.equals(ctx.getPackageName())) continue;
 
             boolean isSelected = ignoredApps.contains(pkg);
-            boolean shouldIgnore = whitelistMode ? !isSelected : isSelected;
-            if (shouldIgnore) {
+            boolean isIgnored = whitelistMode ? !isSelected : isSelected;
+            if (isIgnored) {
                 ignored++;
                 continue;
             }
@@ -578,7 +578,7 @@ public class StorageFixer {
             logDirState("FUSE", FUSE + "/" + type + "/" + pkg);
         }
 
-        if (shouldIgnore) {
+        if (isIgnored) {
             FixerLog.i("=== FIX SKIPPED (app is ignored) ===");
         } else {
             FixerLog.i("=== APPLYING FIX ===");

@@ -289,27 +289,6 @@ public class StorageFixer {
                     " android.permission.WRITE_EXTERNAL_STORAGE 2>/dev/null"
             ).exec();
 
-            // Create and permission the custom legacy directory (lower FS path)
-            String customDir = getCustomDirName(pkg);
-            String customPath = "/data/media/0/" + customDir;
-            Shell.cmd("mkdir -p " + customPath).exec();
-            Shell.cmd("chown " + owner + " " + customPath).exec();
-            Shell.cmd("chmod 777 " + customPath).exec();
-            Shell.cmd(
-                "chcon u:object_r:media_rw_data_file:s0 " +
-                    customPath +
-                    " 2>/dev/null"
-            ).exec();
-
-            // Ensure /sdcard/Download/ is fully writeable (lower FS path is /data/media/0/Download)
-            String downloadPath = "/data/media/0/Download";
-            Shell.cmd("mkdir -p " + downloadPath).exec();
-            Shell.cmd("chmod 777 " + downloadPath).exec();
-            Shell.cmd(
-                "chcon u:object_r:media_rw_data_file:s0 " +
-                    downloadPath +
-                    " 2>/dev/null"
-            ).exec();
 
             FixerLog.i("Legacy storage fix complete for " + pkg);
         }
@@ -697,4 +676,13 @@ public class StorageFixer {
             );
         }
     }
+    public static void applySELinuxFix() {
+        String rule = "allow vold_prepare_subdirs checkin_data_file dir relabelfrom";
+        Shell.Result r = Shell.cmd("magiskpolicy --live '" + rule + "' 2>&1").exec();
+        if (!r.isSuccess()) {
+            Shell.cmd("supolicy --live '" + rule + "' 2>&1").exec();
+        }
+        FixerLog.i("SELinux fix applied: " + rule);
+    }
+
 }

@@ -53,11 +53,18 @@ jobs:
         with:
           gradle-version: "9.5.1"
 
+      - name: Decode signing keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/release-key.jks
+
       - name: Build
         run: gradle ${{ inputs.gradle-task }} --no-daemon
         env:
           GITHUB_REF: ${{ github.ref }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          SIGNING_KEYSTORE_PATH: ${{ runner.temp }}/release-key.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload Artifact
         if: inputs.upload-artifact

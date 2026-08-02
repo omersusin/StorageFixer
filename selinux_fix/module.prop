@@ -1,0 +1,5 @@
+id=storagefixer-sepolicy-fix
+name=StorageFixer SELinux Policy Fix
+version=1.0
+author=Ömer Susin
+description=Fixes vold_prepare_subdirs denial for StorageFixer

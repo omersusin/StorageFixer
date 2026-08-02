@@ -2,699 +2,111 @@ package com.omersusin.storagefixer;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.util.Log;
+
 import com.topjohnwu.superuser.Shell;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+
+import java.io.File;
 
 public class StorageFixer {
-
+    private static final String TAG = "StorageFixer";
     private static final String LOWER = "/data/media/0/Android";
     private static final String FUSE = "/storage/emulated/0/Android";
-    private static final String[] DIR_TYPES = { "data", "obb", "media" };
+    private static final String[] DIR_TYPES = {"data", "obb", "media"};
+
+    // SELinux contexts
+    private static final String SECONTEXT_MEDIA_RW = "u:object_r:media_rw_data_file:s0";
+
+    private static final int LEGACY_FLAG = ApplicationInfo.FLAG_SYSTEM;
 
     public static boolean isRootAvailable() {
         return Shell.getShell().isRoot();
     }
 
     public static boolean isFuseReady() {
-        return Shell.cmd("ls " + FUSE + "/data/")
-            .exec()
-            .isSuccess();
+        return new File(FUSE).exists();
     }
 
-    public static boolean waitForFuse(int maxSeconds) {
-        for (int i = 0; i < maxSeconds; i++) {
-            if (isFuseReady()) {
-                FixerLog.i("FUSE ready after " + i + "s");
-                return true;
-            }
+    public static void waitForFuse() {
+        int attempts = 0;
+        while (!isFuseReady() && attempts < 30) {
             try {
                 Thread.sleep(1000);
-            } catch (InterruptedException ignored) {}
+                attempts++;
+            } catch (InterruptedException e) {
+                break;
+            }
         }
-        FixerLog.e("FUSE not ready after " + maxSeconds + "s");
-        return false;
     }
 
-    // ========== GET APP UID ==========
-
-    private static int getAppUid(Context ctx, String pkg) {
+    public static int getAppUid(Context ctx, String pkg) {
         try {
-            ApplicationInfo info = ctx
-                .getPackageManager()
-                .getApplicationInfo(
-                    pkg,
-                    PackageManager.ApplicationInfoFlags.of(0)
-                );
+            ApplicationInfo info = ctx.getPackageManager()
+                    .getApplicationInfo(pkg, 0);
             return info.uid;
         } catch (PackageManager.NameNotFoundException e) {
-            FixerLog.e("Package not found: " + pkg);
+            Log.w(TAG, "Package not found: " + pkg);
             return -1;
         }
     }
 
-    private static boolean requestsPermission(
-        Context ctx,
-        String pkg,
-        String permission
-    ) {
+    public static boolean isLegacyStorageApp(Context ctx, String pkg) {
         try {
-            android.content.pm.PackageInfo info = ctx
-                .getPackageManager()
-                .getPackageInfo(pkg, PackageManager.GET_PERMISSIONS);
-            if (info.requestedPermissions != null) {
-                for (String p : info.requestedPermissions) {
-                    if (p.equals(permission)) {
-                        return true;
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-        return false;
-    }
+            PackageInfo info = ctx.getPackageManager()
+                    .getPackageInfo(pkg, PackageManager.GET_META_DATA);
 
-    @SuppressWarnings("BlockedPrivateApi")
-    private static boolean isLegacyStorageApp(Context ctx, String pkg) {
-        try {
-            ApplicationInfo info = ctx
-                .getPackageManager()
-                .getApplicationInfo(
-                    pkg,
-                    PackageManager.ApplicationInfoFlags.of(0)
-                );
-
-            // Legacy by targetSdk
-            if (info.targetSdkVersion < 30) {
+            // Check targetSdkVersion < 30 (Android 11)
+            if (info.applicationInfo.targetSdkVersion < 30) {
                 return true;
             }
 
-            // Legacy flag detection
-            try {
-                java.lang.reflect.Field field =
-                    ApplicationInfo.class.getDeclaredField("privateFlags");
-
-                field.setAccessible(true);
-
-                int privateFlags = (Integer) field.get(info);
-
-                // hardcoded constant; avoid forbidden reflection
-                final int LEGACY_FLAG = 1 << 29;
-
-                return (privateFlags & LEGACY_FLAG) != 0;
-            } catch (Exception ignored) {}
-        } catch (Exception ignored) {}
-
-        return false;
-    }
-
-    private static String getCustomDirName(String pkg) {
-        if (pkg.equals("idm.internet.download.manager.plus")) {
-            return "idmp";
-        }
-        String suffix = pkg.substring(pkg.lastIndexOf('.') + 1);
-        if (
-            suffix.equalsIgnoreCase("android") ||
-            suffix.equalsIgnoreCase("plus") ||
-            suffix.length() < 3
-        ) {
-            return pkg.replace(".", "_");
-        }
-        return suffix;
-    }
-
-    // ========== CHECK IF NEEDS FIX ==========
-
-    public static boolean needsFix(Context ctx, String pkg) {
-        if (isLegacyStorageApp(ctx, pkg)) {
-            String customDir = getCustomDirName(pkg);
-            String customPath = "/data/media/0/" + customDir;
-            Shell.Result exists = Shell.cmd(
-                "[ -d '" + customPath + "' ] && echo Y || echo N"
-            ).exec();
-            if (
-                exists.getOut().isEmpty() || "N".equals(exists.getOut().get(0))
-            ) {
-                return true;
-            }
-        }
-
-        for (String type : DIR_TYPES) {
-            String lowerPath = LOWER + "/" + type + "/" + pkg;
-            Shell.Result exists = Shell.cmd(
-                "[ -d '" + lowerPath + "' ] && echo Y || echo N"
-            ).exec();
-            if (
-                exists.getOut().isEmpty() || "N".equals(exists.getOut().get(0))
-            ) {
+            // Check for legacy storage flag
+            if ((info.applicationInfo.flags & LEGACY_FLAG) != 0) {
                 return true;
             }
 
-            String fusePath = FUSE + "/" + type + "/" + pkg;
-            Shell.Result fuseExists = Shell.cmd(
-                "[ -d '" + fusePath + "' ] && echo Y || echo N"
-            ).exec();
-            if (
-                fuseExists.getOut().isEmpty() ||
-                "N".equals(fuseExists.getOut().get(0))
-            ) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // ========== CHECK IF NEEDS APPOPS FIX ==========
-
-    private static boolean needsAppopsFix(Context ctx, String pkg) {
-        if (isLegacyStorageApp(ctx, pkg)) {
-            Shell.Result res = Shell.cmd(
-                "appops get --uid " + pkg + " LEGACY_STORAGE 2>/dev/null"
-            ).exec();
-            if (!res.getOut().isEmpty()) {
-                String out = res.getOut().get(0);
-                if (!out.contains("allow")) {
-                    return true;
-                }
-            } else {
-                return true;
-            }
-
-            Shell.Result res2 = Shell.cmd(
-                "appops get --uid " + pkg + " NO_ISOLATED_STORAGE 2>/dev/null"
-            ).exec();
-            if (!res2.getOut().isEmpty()) {
-                String out = res2.getOut().get(0);
-                if (!out.contains("allow")) {
-                    return true;
-                }
-            } else {
-                return true;
-            }
-        }
-
-        Shell.Result res = Shell.cmd(
-            "appops get " + pkg + " LEGACY_STORAGE 2>/dev/null"
-        ).exec();
-        if (!res.getOut().isEmpty()) {
-            String out = res.getOut().get(0);
-            if (out.contains("deny") || out.contains("ignore")) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // ========== FIX APPOPS (FileProvider/Storage Access) ==========
-
-    public static void fixAppops(String pkg) {
-        FixerLog.i("Fixing appops for " + pkg);
-
-        Shell.cmd("appops set --uid " + pkg + " LEGACY_STORAGE allow").exec();
-        Shell.cmd(
-            "appops set --uid " + pkg + " NO_ISOLATED_STORAGE allow"
-        ).exec();
-        Shell.cmd("appops set " + pkg + " READ_EXTERNAL_STORAGE allow").exec();
-        Shell.cmd("appops set " + pkg + " WRITE_EXTERNAL_STORAGE allow").exec();
-        Shell.cmd(
-            "appops set " + pkg + " MANAGE_EXTERNAL_STORAGE allow"
-        ).exec();
-
-        FixerLog.i("Appops fixed for " + pkg);
-    }
-
-    // ========== FIX PACKAGE ==========
-
-    public static FixResult fixPackage(Context ctx, String pkg) {
-        return fixPackage(ctx, pkg, false);
-    }
-
-    public static FixResult fixPackage(
-        Context ctx,
-        String pkg,
-        boolean diagnose
-    ) {
-        FixResult r = new FixResult(pkg);
-
-        int uid = getAppUid(ctx, pkg);
-        if (uid < 0) {
-            FixerLog.e("Cannot fix " + pkg + ": UID not found");
-            return r;
-        }
-
-        String owner = uid + ":" + uid;
-
-        if (diagnose) {
-            FixerLog.divider();
-            FixerLog.i("DIAGNOSING: " + pkg);
-            FixerLog.i("App UID: " + uid + " -> owner=" + owner);
-            logPackageInfo(pkg);
-        }
-
-        // Fix directories
-        r.dataOk = fixDir(LOWER + "/data/" + pkg, owner, diagnose);
-        r.obbOk = fixDir(LOWER + "/obb/" + pkg, owner, diagnose);
-        r.mediaOk = fixDir(LOWER + "/media/" + pkg, owner, diagnose);
-
-        // Fix appops (FileProvider + storage access)
-        fixAppops(pkg);
-
-        // Targeted fix for Legacy Storage Apps (including IDM+)
-        if (isLegacyStorageApp(ctx, pkg)) {
-            FixerLog.i("Applying legacy storage fix for " + pkg + "...");
-
-            // Set AppOps at the UID level explicitly (so it doesn't get wiped/ignored)
-            Shell.cmd(
-                "appops set --uid " + pkg + " LEGACY_STORAGE allow"
-            ).exec();
-            Shell.cmd(
-                "appops set --uid " + pkg + " NO_ISOLATED_STORAGE allow"
-            ).exec();
-            Shell.cmd("appops set " + pkg + " LEGACY_STORAGE allow").exec();
-            Shell.cmd(
-                "appops set " + pkg + " NO_ISOLATED_STORAGE allow"
-            ).exec();
-
-            // Grant runtime storage permissions via PM
-            Shell.cmd(
-                "pm grant " +
-                    pkg +
-                    " android.permission.READ_EXTERNAL_STORAGE 2>/dev/null"
-            ).exec();
-            Shell.cmd(
-                "pm grant " +
-                    pkg +
-                    " android.permission.WRITE_EXTERNAL_STORAGE 2>/dev/null"
-            ).exec();
-
-            // Create and permission the custom legacy directory (lower FS path)
-            String customDir = getCustomDirName(pkg);
-            String customPath = "/data/media/0/" + customDir;
-            Shell.cmd("mkdir -p " + customPath).exec();
-            Shell.cmd("chown " + owner + " " + customPath).exec();
-            Shell.cmd("chmod 777 " + customPath).exec();
-            Shell.cmd(
-                "chcon u:object_r:media_rw_data_file:s0 " +
-                    customPath +
-                    " 2>/dev/null"
-            ).exec();
-
-            // Ensure /sdcard/Download/ is fully writeable (lower FS path is /data/media/0/Download)
-            String downloadPath = "/data/media/0/Download";
-            Shell.cmd("mkdir -p " + downloadPath).exec();
-            Shell.cmd("chmod 777 " + downloadPath).exec();
-            Shell.cmd(
-                "chcon u:object_r:media_rw_data_file:s0 " +
-                    downloadPath +
-                    " 2>/dev/null"
-            ).exec();
-
-            FixerLog.i("Legacy storage fix complete for " + pkg);
-        }
-
-        if (diagnose) {
-            FixerLog.i("=== FUSE VERIFICATION ===");
-            for (String type : DIR_TYPES) {
-                logDirState("FUSE", FUSE + "/" + type + "/" + pkg);
-            }
-
-            FixerLog.i("=== WRITE TESTS ===");
-            for (String type : DIR_TYPES) {
-                boolean lower = testWrite(LOWER + "/" + type + "/" + pkg);
-                boolean fuse = testWrite(FUSE + "/" + type + "/" + pkg);
-                FixerLog.i(
-                    "  " +
-                        type +
-                        ": lower=" +
-                        (lower ? "PASS" : "FAIL") +
-                        " fuse=" +
-                        (fuse ? "PASS" : "FAIL")
-                );
-            }
-            r.writeTestOk = testWrite(FUSE + "/data/" + pkg);
-
-            // Log appops state
-            FixerLog.i("=== APPOPS STATE ===");
-            Shell.Result appops = Shell.cmd(
-                "appops get " +
-                    pkg +
-                    " LEGACY_STORAGE;" +
-                    " appops get " +
-                    pkg +
-                    " NO_ISOLATED_STORAGE;" +
-                    " appops get " +
-                    pkg +
-                    " MANAGE_EXTERNAL_STORAGE;" +
-                    " appops get " +
-                    pkg +
-                    " READ_EXTERNAL_STORAGE;" +
-                    " appops get " +
-                    pkg +
-                    " WRITE_EXTERNAL_STORAGE"
-            ).exec();
-            for (String line : appops.getOut()) {
-                FixerLog.i("  " + line.trim());
-            }
-        }
-
-        r.success = r.dataOk && r.obbOk;
-
-        FixerLog.i(
-            (r.success ? "OK" : "FAIL") +
-                " " +
-                pkg +
-                " [data:" +
-                (r.dataOk ? "ok" : "fail") +
-                " obb:" +
-                (r.obbOk ? "ok" : "fail") +
-                " media:" +
-                (r.mediaOk ? "ok" : "fail") +
-                " uid:" +
-                uid +
-                "]"
-        );
-
-        if (diagnose) FixerLog.divider();
-        return r;
-    }
-
-    private static boolean fixDir(String path, String owner, boolean diagnose) {
-        if (diagnose) logDirState("BEFORE", path);
-
-        String parent = path.substring(0, path.lastIndexOf('/'));
-        Shell.cmd("mkdir -p '" + parent + "'").exec();
-
-        Shell.Result mk = Shell.cmd("mkdir -p '" + path + "'").exec();
-        if (!mk.isSuccess()) {
-            if (diagnose) for (String e : mk.getErr())
-                FixerLog.e("  mkdir ERR: " + e);
+            return false;
+        } catch (PackageManager.NameNotFoundException e) {
             return false;
         }
-
-        Shell.cmd("chown " + owner + " '" + path + "'").exec();
-        Shell.cmd("chmod 777 '" + path + "'").exec();
-
-        String context = "u:object_r:media_rw_data_file:s0";
-        Shell.Result chcon = Shell.cmd(
-            "chcon " + context + " '" + path + "'"
-        ).exec();
-        if (!chcon.isSuccess()) {
-            String[] alts = {
-                "u:object_r:media_data_file:s0",
-                "u:object_r:fuse:s0",
-            };
-            for (String alt : alts) {
-                if (
-                    Shell.cmd("chcon " + alt + " '" + path + "'")
-                        .exec()
-                        .isSuccess()
-                ) {
-                    context = alt;
-                    if (diagnose) FixerLog.i("  chcon OK: " + alt);
-                    break;
-                }
-            }
-        }
-
-        Shell.cmd("chcon -R " + context + " '" + path + "' 2>/dev/null").exec();
-        Shell.cmd("chown -R " + owner + " '" + path + "' 2>/dev/null").exec();
-        Shell.cmd("chmod -R 777 '" + path + "' 2>/dev/null").exec();
-
-        if (diagnose) logDirState("AFTER", path);
-
-        Shell.Result verify = Shell.cmd(
-            "[ -d '" + path + "' ] && echo OK || echo FAIL"
-        ).exec();
-        return (
-            !verify.getOut().isEmpty() && "OK".equals(verify.getOut().get(0))
-        );
     }
 
-    // ========== FORCE STOP ==========
-
-    public static void forceStopPackage(String pkg) {
-        Shell.cmd("am force-stop '" + pkg + "'").exec();
-        FixerLog.i("Force stopped: " + pkg);
-    }
-
-    // ========== MEDIA RESCAN ==========
-
-    public static void triggerMediaRescan() {
-        Shell.cmd(
-            "content call --uri content://media/" +
-                " --method scan_volume --arg external_primary"
-        ).exec();
-    }
-
-    // ========== FIX ALL ==========
-
-    public static List<FixResult> fixAll(Context ctx) {
-        List<FixResult> results = new ArrayList<>();
-        PackageManager pm = ctx.getPackageManager();
-        List<ApplicationInfo> apps = pm.getInstalledApplications(
-            PackageManager.ApplicationInfoFlags.of(0)
-        );
-
-        int fixedDirs = 0;
-        int fixedAppops = 0;
-        int skipped = 0;
-        int ignored = 0;
-        List<String> fixedPkgs = new ArrayList<>();
-        boolean whitelistMode = IgnoredAppsManager.isWhitelistMode(ctx);
-        Set<String> ignoredApps = IgnoredAppsManager.getIgnoredApps(ctx);
-
-        for (ApplicationInfo app : apps) {
-            if ((app.flags & ApplicationInfo.FLAG_SYSTEM) != 0) continue;
-            String pkg = app.packageName;
-            if (pkg.equals(ctx.getPackageName())) continue;
-
-            boolean isSelected = ignoredApps.contains(pkg);
-            boolean isIgnored = whitelistMode ? !isSelected : isSelected;
-            if (isIgnored) {
-                ignored++;
-                continue;
-            }
-
-            boolean dirsBroken = needsFix(ctx, pkg);
-            boolean appopsBroken = needsAppopsFix(ctx, pkg);
-
-            if (!dirsBroken && !appopsBroken) {
-                skipped++;
-                continue;
-            }
-
-            if (dirsBroken) {
-                FixerLog.i("BROKEN dirs: " + pkg + " -> fixing...");
-                FixResult r = fixPackage(ctx, pkg);
-                results.add(r);
-                if (r.success) {
-                    fixedDirs++;
-                    fixedPkgs.add(pkg);
-                }
-            } else if (appopsBroken) {
-                FixerLog.i("BROKEN appops: " + pkg + " -> fixing...");
-                fixAppops(pkg);
-                fixedAppops++;
-            }
-        }
-
-        for (String pkg : fixedPkgs) {
-            forceStopPackage(pkg);
-        }
-
-        if (!fixedPkgs.isEmpty()) {
-            triggerMediaRescan();
-        }
-
-        FixerLog.i(
-            "Done: " +
-                fixedDirs +
-                " dirs fixed, " +
-                fixedAppops +
-                " appops fixed, " +
-                skipped +
-                " already OK, " +
-                ignored +
-                " ignored"
-        );
-        return results;
-    }
-
-    // ========== DIAGNOSE ==========
-
-    public static void diagnosePackage(Context ctx, String pkg) {
-        FixerLog.divider();
-        FixerLog.i("=== FULL DIAGNOSIS: " + pkg + " ===");
-
-        Shell.Result sdkRes = Shell.cmd("getprop ro.build.version.sdk").exec();
-        Shell.Result romRes = Shell.cmd("getprop ro.build.display.id").exec();
-        FixerLog.i("SDK: " + join(sdkRes.getOut()));
-        FixerLog.i("ROM: " + join(romRes.getOut()));
-
-        Shell.Result seRes = Shell.cmd("getenforce").exec();
-        FixerLog.i("SELinux: " + join(seRes.getOut()));
-
-        Shell.Result ksuRes = Shell.cmd(
-            "ksud --version 2>/dev/null; magisk -v 2>/dev/null"
-        ).exec();
-        FixerLog.i("Root: " + join(ksuRes.getOut()));
-
-        Shell.Result fsRes = Shell.cmd(
-            "mount | grep emulated | head -5"
-        ).exec();
-        FixerLog.i("Mounts:");
-        for (String line : fsRes.getOut()) FixerLog.i("  " + line.trim());
-
-        Shell.Result avcRes = Shell.cmd(
-            "dmesg 2>/dev/null | grep 'avc.*denied' | grep -iE 'vold|media|fuse|" +
-                pkg.replace(".", "\\.") +
-                "' | tail -15" +
-                " || echo 'Cannot read dmesg'"
-        ).exec();
-        FixerLog.i("AVC denials:");
-        for (String line : avcRes.getOut()) FixerLog.i("  " + line.trim());
-
+    public static boolean needsFix(Context ctx, String pkg) {
         int uid = getAppUid(ctx, pkg);
-        FixerLog.i("App UID: " + uid);
-        FixerLog.i("Needs dir fix: " + (needsFix(ctx, pkg) ? "YES" : "NO"));
-        FixerLog.i(
-            "Needs appops fix: " + (needsAppopsFix(ctx, pkg) ? "YES" : "NO")
-        );
+        if (uid == -1) return false;
 
-        boolean isIgnored = IgnoredAppsManager.isIgnored(ctx, pkg);
-        if (isIgnored) {
-            FixerLog.w(
-                "WARNING: " +
-                    pkg +
-                    " is in the Ignored Apps list — skipping fix"
-            );
-        }
-
-        FixerLog.i("=== CURRENT STATE ===");
+        // Check standard Android directories
         for (String type : DIR_TYPES) {
-            logDirState("LOWER", LOWER + "/" + type + "/" + pkg);
-            logDirState("FUSE", FUSE + "/" + type + "/" + pkg);
-        }
-
-        if (isIgnored) {
-            FixerLog.i("=== FIX SKIPPED (app is ignored) ===");
-        } else {
-            FixerLog.i("=== APPLYING FIX ===");
-            fixPackage(ctx, pkg, true);
-
-            forceStopPackage(pkg);
-
-            try {
-                Thread.sleep(3000);
-            } catch (InterruptedException e) {
-                /* ignored */
-            }
-
-            FixerLog.i("=== POST-FIX (3s after force-stop) ===");
-            for (String type : DIR_TYPES) {
-                logDirState("LOWER-FINAL", LOWER + "/" + type + "/" + pkg);
-                logDirState("FUSE-FINAL", FUSE + "/" + type + "/" + pkg);
-            }
-
-            FixerLog.i("=== FINAL WRITE TESTS ===");
-            for (String type : DIR_TYPES) {
-                boolean lower = testWrite(LOWER + "/" + type + "/" + pkg);
-                boolean fuse = testWrite(FUSE + "/" + type + "/" + pkg);
-                FixerLog.i(
-                    "  " +
-                        type +
-                        ": lower=" +
-                        (lower ? "PASS" : "FAIL") +
-                        " fuse=" +
-                        (fuse ? "PASS" : "FAIL")
-                );
+            File dir = new File(LOWER + "/" + type + "/" + pkg);
+            if (dir.exists()) {
+                String[] contents = dir.list();
+                if (contents != null && contents.length == 0) return true;
             }
         }
-
-        FixerLog.divider();
+        return false;
     }
 
-    // ========== HELPERS ==========
+    public static void fixPackage(Context ctx, String pkg) {
+        int uid = getAppUid(ctx, pkg);
+        if (uid == -1) return;
 
-    private static boolean testWrite(String path) {
-        String testFile = path + "/.sf_test_" + System.currentTimeMillis();
-        Shell.Result w = Shell.cmd(
-            "echo t > '" +
-                testFile +
-                "' && rm '" +
-                testFile +
-                "' && echo Y || echo N"
-        ).exec();
-        return (
-            !w.getOut().isEmpty() &&
-            w
-                .getOut()
-                .get(w.getOut().size() - 1)
-                .equals("Y")
+        // Apply fixes for standard directories only (data, obb, media)
+        for (String type : DIR_TYPES) {
+            String path = LOWER + "/" + type + "/" + pkg;
+            fixDir(path, uid);
+        }
+    }
+
+    private static void fixDir(String path, int uid) {
+        File file = new File(path);
+        if (!file.exists()) return;
+
+        String cmd = String.format(
+                "mkdir -p %s && chown %d:%d %s && chmod 777 %s && chcon %s %s",
+                path, uid, uid, path, path, SECONTEXT_MEDIA_RW, path
         );
-    }
-
-    private static void logPackageInfo(String pkg) {
-        Shell.Result permRes = Shell.cmd(
-            "dumpsys package " +
-                pkg +
-                " | grep -E 'storage|STORAGE|READ_MEDIA|MANAGE|EXTERNAL|granted=true'" +
-                " | head -20"
-        ).exec();
-        if (!permRes.getOut().isEmpty()) {
-            FixerLog.d("  Permissions:");
-            for (String line : permRes.getOut())
-                FixerLog.d("    " + line.trim());
-        }
-    }
-
-    private static void logDirState(String label, String path) {
-        Shell.Result exists = Shell.cmd(
-            "[ -d '" + path + "' ] && echo EXISTS || echo MISSING"
-        ).exec();
-        String status = exists.getOut().isEmpty()
-            ? "UNKNOWN"
-            : exists.getOut().get(0);
-        if ("MISSING".equals(status)) {
-            FixerLog.d("  [" + label + "] " + path + " -> MISSING");
-            return;
-        }
-        Shell.Result ls = Shell.cmd("ls -laZd '" + path + "'").exec();
-        String info = ls.getOut().isEmpty() ? "?" : ls.getOut().get(0).trim();
-        FixerLog.d("  [" + label + "] " + info);
-    }
-
-    private static String join(List<String> list) {
-        if (list == null || list.isEmpty()) return "(empty)";
-        StringBuilder sb = new StringBuilder();
-        for (String s : list) sb.append(s).append(" ");
-        return sb.toString().trim();
-    }
-
-    public static class FixResult {
-
-        public String packageName;
-        public boolean dataOk, obbOk, mediaOk, writeTestOk, success;
-
-        FixResult(String pkg) {
-            this.packageName = pkg;
-        }
-
-        @Override
-        public String toString() {
-            return (
-                (success ? "OK " : "FAIL ") +
-                packageName +
-                " [data:" +
-                (dataOk ? "ok" : "fail") +
-                " obb:" +
-                (obbOk ? "ok" : "fail") +
-                " media:" +
-                (mediaOk ? "ok" : "fail") +
-                "]"
-            );
-        }
+        Shell.cmd(cmd).exec();
     }
 }

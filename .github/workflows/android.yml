@@ -28,7 +28,7 @@ on:
         default: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   android:
@@ -72,4 +72,3 @@ jobs:
         with:
           generate_release_notes: true
           files: ${{ inputs.artifact-path }}
-          token: ${{ secrets.RELEASE_PAT }}

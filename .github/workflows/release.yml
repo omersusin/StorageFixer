@@ -28,6 +28,7 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/android.yml
+    secrets: inherit
     with:
       gradle-task: "assembleRelease"
       upload-artifact: true

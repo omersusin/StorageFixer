@@ -14,6 +14,51 @@ public class StorageFixer {
     private static final String FUSE = "/storage/emulated/0/Android";
     private static final String[] DIR_TYPES = { "data", "obb", "media" };
 
+    // Internal storage roots. Folders must NOT be created directly here —
+    // only in nested subfolders like /storage/emulated/0/Android/data.
+    private static final String[] STORAGE_ROOTS = {
+        "/data/media/0",
+        "/storage/emulated/0",
+        "/mnt/pass_through/0/emulated/0",
+        "/sdcard",
+    };
+
+    // True if path is a direct child of an internal storage root
+    // (e.g. /storage/emulated/0/foo). Nested paths return false.
+    private static boolean isStorageRootChild(String path) {
+        String norm = path.endsWith("/")
+            ? path.substring(0, path.length() - 1)
+            : path;
+        for (String root : STORAGE_ROOTS) {
+            if (norm.startsWith(root + "/")) {
+                String rel = norm.substring(root.length() + 1);
+                return !rel.contains("/");
+            }
+        }
+        return false;
+    }
+
+    // mkdir -p that refuses to CREATE a new folder directly on the internal
+    // storage root. Already-existing root folders (e.g. Download) pass through.
+    private static boolean safeMkdir(String path) {
+        if (isStorageRootChild(path)) {
+            Shell.Result ex = Shell.cmd(
+                "[ -d '" + path + "' ] && echo Y || echo N"
+            ).exec();
+            boolean exists =
+                !ex.getOut().isEmpty() && "Y".equals(ex.getOut().get(0));
+            if (!exists) {
+                FixerLog.w(
+                    "Refusing to create root-level folder on internal storage: " +
+                        path
+                );
+                return false;
+            }
+            return true;
+        }
+        return Shell.cmd("mkdir -p '" + path + "'").exec().isSuccess();
+    }
+
     public static boolean isRootAvailable() {
         return Shell.getShell().isRoot();
     }
@@ -289,27 +334,31 @@ public class StorageFixer {
                     " android.permission.WRITE_EXTERNAL_STORAGE 2>/dev/null"
             ).exec();
 
-            // Create and permission the custom legacy directory (lower FS path)
+            // Permission the custom legacy directory (lower FS path).
+            // safeMkdir won't create it at storage root — only permission if present.
             String customDir = getCustomDirName(pkg);
             String customPath = "/data/media/0/" + customDir;
-            Shell.cmd("mkdir -p " + customPath).exec();
-            Shell.cmd("chown " + owner + " " + customPath).exec();
-            Shell.cmd("chmod 777 " + customPath).exec();
-            Shell.cmd(
-                "chcon u:object_r:media_rw_data_file:s0 " +
-                    customPath +
-                    " 2>/dev/null"
-            ).exec();
+            if (safeMkdir(customPath)) {
+                Shell.cmd("chown " + owner + " " + customPath).exec();
+                Shell.cmd("chmod 777 " + customPath).exec();
+                Shell.cmd(
+                    "chcon u:object_r:media_rw_data_file:s0 " +
+                        customPath +
+                        " 2>/dev/null"
+                ).exec();
+            }
 
-            // Ensure /sdcard/Download/ is fully writeable (lower FS path is /data/media/0/Download)
+            // Ensure /sdcard/Download/ is fully writeable (lower FS path is /data/media/0/Download).
+            // Standard folder — normally already exists; safeMkdir won't create it fresh.
             String downloadPath = "/data/media/0/Download";
-            Shell.cmd("mkdir -p " + downloadPath).exec();
-            Shell.cmd("chmod 777 " + downloadPath).exec();
-            Shell.cmd(
-                "chcon u:object_r:media_rw_data_file:s0 " +
-                    downloadPath +
-                    " 2>/dev/null"
-            ).exec();
+            if (safeMkdir(downloadPath)) {
+                Shell.cmd("chmod 777 " + downloadPath).exec();
+                Shell.cmd(
+                    "chcon u:object_r:media_rw_data_file:s0 " +
+                        downloadPath +
+                        " 2>/dev/null"
+                ).exec();
+            }
 
             FixerLog.i("Legacy storage fix complete for " + pkg);
         }
@@ -384,12 +433,10 @@ public class StorageFixer {
         if (diagnose) logDirState("BEFORE", path);
 
         String parent = path.substring(0, path.lastIndexOf('/'));
-        Shell.cmd("mkdir -p '" + parent + "'").exec();
+        safeMkdir(parent);
 
-        Shell.Result mk = Shell.cmd("mkdir -p '" + path + "'").exec();
-        if (!mk.isSuccess()) {
-            if (diagnose) for (String e : mk.getErr())
-                FixerLog.e("  mkdir ERR: " + e);
+        if (!safeMkdir(path)) {
+            if (diagnose) FixerLog.e("  mkdir refused/failed: " + path);
             return false;
         }
 

@@ -2,7 +2,7 @@
 
 **Fixes Android 16 QPR1+ storage permission bugs on AOSP-based ROMs.**
 
-[![Build](https://github.com/omersusin/StorageFixer/actions/workflows/build.yml/badge.svg)](https://github.com/omersusin/StorageFixer/actions/workflows/build.yml)
+[![Latest release](https://github.com/omersusin/StorageFixer/actions/workflows/build.yml/badge.svg)](https://github.com/omersusin/StorageFixer/releases/latest)
 ![GitHub Downloads](https://img.shields.io/github/downloads/omersusin/StorageFixer/total.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/Android-14--16-3ddc84.svg)

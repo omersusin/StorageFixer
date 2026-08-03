@@ -55,9 +55,11 @@ StorageFixer is a **hybrid solution** — a root Android app combined with an LS
 | Feature | Description |
 |--------|-------------|
 | Boot-time scan | Scans all 3rd-party apps on boot, fixes missing directories |
-| Install listener | Listens for `PACKAGE_ADDED` and `PACKAGE_REPLACED` |
+| Persistent install watcher | `FixerService` stays running in the foreground after the boot scan and dynamically registers a receiver for `PACKAGE_ADDED`, `PACKAGE_REPLACED`, and `DOWNLOAD_COMPLETE` — more reliable than a static manifest receiver, which could get killed before it ever fired |
+| Whitelist mode | Optionally restrict fixes to a chosen list of apps instead of every app on the device — useful if you only want a handful of apps fixed |
 | Smart detection | Only fixes apps with missing directories |
 | 10-second delay | Waits for `vold` to fail before applying fix |
+| Guarded root creation | `safeMkdir()` refuses to create new top-level folders directly under a storage root (e.g. the sdcard root) unless they already exist; existing and nested directories are unaffected |
 | App UID ownership | Sets directory ownership to the app's actual UID |
 | Force stop | Force stops fixed apps so they pick up new permissions |
 | MediaProvider rescan | Triggers volume rescan after fixes |
@@ -73,11 +75,11 @@ StorageFixer is a **hybrid solution** — a root Android app combined with an LS
 
 ### Fix Flow
 
-Device boots → BootReceiver fires → Wait for FUSE + vold delay → Scan all apps → Fix missing directories → Force stop apps
+Device boots → `FixerService` starts → Waits for FUSE + vold delay → Scans all apps → Fixes missing directories → Force stops fixed apps → Registers a package receiver and keeps running in the foreground, watching for new installs/updates
 
-New app installed → PackageReceiver fires → Wait 10 seconds → Fix directories if missing → Force stop app
+New app installed or updated → Package receiver (running inside `FixerService`) fires → Fixes directories if missing, respecting whitelist mode if enabled → Force stops the app
 
-App shares file → Xposed hook intercepts FileProvider → Rewrite path → Valid content:// URI generated → File opens normally
+App shares a file → Xposed hook intercepts FileProvider → Rewrite path → Valid `content://` URI generated → File opens normally
 
 ---
 
@@ -95,8 +97,9 @@ App shares file → Xposed hook intercepts FileProvider → Rewrite path → Val
 2. Install the APK
 3. Open StorageFixer and grant **root access**
 4. Disable **battery optimization**
-5. Grant **notification permission**
-6. (Optional) Enable the **Xposed module in LSPosed**
+5. Grant **notification permission** (the persistent foreground notification is what lets the app catch new installs instantly)
+6. (Optional) Enable **whitelist mode** if you only want specific apps fixed
+7. (Optional) Enable the **Xposed module in LSPosed**
 
 ---
 
@@ -114,6 +117,8 @@ App shares file → Xposed hook intercepts FileProvider → Rewrite path → Val
 | Chrome | ✅ | — |
 | 95+ other apps | ✅ | — |
 
+Fixing *every* app isn't always desirable — some users have seen it interfere with apps like Google Photos backups. Use **whitelist mode** to scope fixes to just the apps you need.
+
 ---
 
 ## App Features
@@ -121,10 +126,11 @@ App shares file → Xposed hook intercepts FileProvider → Rewrite path → Val
 | Feature | Description |
 |--------|-------------|
 | Fix All | Manually scan and fix broken apps |
+| Whitelist Mode | Restrict automatic and manual fixes to a chosen set of apps |
 | Diagnose | Run detailed diagnostics |
 | Copy Logs | Copy logs to clipboard |
 | Clear Logs | Clear log history |
-| Auto-fix | Runs automatically on boot and install |
+| Auto-fix | Runs on boot and continuously in the background for new installs/updates |
 
 ---
 
@@ -141,11 +147,13 @@ App shares file → Xposed hook intercepts FileProvider → Rewrite path → Val
 
 ### Why StorageFixer Works
 
-1. Correct timing — waits for `vold` failure  
-2. Lower filesystem — operates on `/data/media/0`  
-3. Correct ownership — sets app UID  
-4. Broadcast-based detection — uses `PACKAGE_ADDED`  
-5. Xposed hook — fixes FileProvider without permission hacks
+1. Correct timing — waits for `vold` failure
+2. Lower filesystem — operates on `/data/media/0`
+3. Correct ownership — sets app UID
+4. Persistent, broadcast-based detection — `FixerService` keeps a dynamically registered receiver alive instead of relying on a manifest receiver that the system can kill before `PACKAGE_ADDED` fires
+5. Guarded directory creation — `safeMkdir()` won't create new folders at the root of a storage volume, only within apps' own directories or paths that already exist
+6. Xposed hook — fixes FileProvider without permission hacks
+7. Whitelist mode — lets you scope fixes to a handful of apps instead of applying them device-wide
 
 ### Mount Configuration (Android 16 QPR1+)
 
@@ -167,28 +175,38 @@ App shares file → Xposed hook intercepts FileProvider → Rewrite path → Val
 3. Go to **Actions**
 4. Download the built APK artifact
 
+Release builds are signed in CI with a dedicated release keystore (credentials pulled from environment variables/secrets), so APKs published under **Releases** aren't debug-signed.
+
 ---
 
 ## FAQ
 
-**Do I need LSPosed?**  
+**Do I need LSPosed?**
 Only if you experience the FileProvider bug.
 
-**Will this break apps?**  
-No. StorageFixer only fixes missing directories.
+**Will this break apps?**
+Fixing a specific app's directories shouldn't break it. Fixing *every* app has, in some cases, interfered with apps like Google Photos backups — if you hit that, switch on whitelist mode and only fix the apps you actually need.
 
-**Does it survive reboot?**  
+**Why does StorageFixer show a persistent notification?**
+`FixerService` stays running in the foreground so it can reliably catch new installs and updates the moment they happen. An earlier approach relied on a manifest-registered receiver that Android could kill before it ever fired, which meant the fix only applied after a reboot.
+
+**Does it survive reboot?**
 Yes. It runs again on boot.
 
-**Which ROMs are affected?**  
+**Which ROMs are affected?**
 AOSP-based ROMs built on Android 16 QPR1 or newer.
 
 ---
 
 ## Credits
 
-- libsu — topjohnwu  
+- libsu — topjohnwu
 - XposedBridge — rovo89
+
+### Contributors
+
+- Whitelist mode & status bar padding fix — [@Kamjue](https://github.com/Kamjue)
+- Persistent install watcher & guarded storage-root creation — [@Gronkdalonka](https://github.com/Gronkdalonka)
 
 ---
 

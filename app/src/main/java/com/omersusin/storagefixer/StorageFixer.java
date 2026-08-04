@@ -102,26 +102,6 @@ public class StorageFixer {
         }
     }
 
-    private static boolean requestsPermission(
-        Context ctx,
-        String pkg,
-        String permission
-    ) {
-        try {
-            android.content.pm.PackageInfo info = ctx
-                .getPackageManager()
-                .getPackageInfo(pkg, PackageManager.GET_PERMISSIONS);
-            if (info.requestedPermissions != null) {
-                for (String p : info.requestedPermissions) {
-                    if (p.equals(permission)) {
-                        return true;
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-        return false;
-    }
-
     @SuppressWarnings("BlockedPrivateApi")
     private static boolean isLegacyStorageApp(Context ctx, String pkg) {
         try {
@@ -238,9 +218,7 @@ public class StorageFixer {
         ).exec();
         if (!res.getOut().isEmpty()) {
             String out = res.getOut().get(0);
-            if (out.contains("deny") || out.contains("ignore")) {
-                return true;
-            }
+            return out.contains("deny") || out.contains("ignore");
         }
 
         return false;

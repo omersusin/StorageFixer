@@ -51,6 +51,9 @@ public class FixerService extends Service {
                 FixerLog.i("Waiting 5s for vold to settle after boot...");
                 Thread.sleep(5000);
 
+                // Stay alive and watch for new installs/downloads
+                registerPackageReceiver();
+
                 updateNotif("Scanning...");
                 List<StorageFixer.FixResult> results =
                         StorageFixer.fixAll(this);
@@ -59,10 +62,6 @@ public class FixerService extends Service {
                         .filter(r -> r.success).count();
                 String msg = ok + "/" + results.size() + " fixed";
                 updateNotif(msg);
-
-                // Stay alive and watch for new installs/downloads
-                registerPackageReceiver();
-                updateNotif("Watching for installs (" + msg + ")");
 
             } catch (Exception e) {
                 FixerLog.e("Service error: " + e.getMessage());

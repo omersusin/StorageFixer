@@ -38,16 +38,18 @@ public class StorageFixer {
         return false;
     }
 
+    private static boolean dirExists(String path) {
+        Shell.Result ex = Shell.cmd(
+            "[ -d '" + path + "' ] && echo Y || echo N"
+        ).exec();
+        return !ex.getOut().isEmpty() && "Y".equals(ex.getOut().get(0));
+    }
+
     // mkdir -p that refuses to CREATE a new folder directly on the internal
     // storage root. Already-existing root folders (e.g. Download) pass through.
     private static boolean safeMkdir(String path) {
         if (isStorageRootChild(path)) {
-            Shell.Result ex = Shell.cmd(
-                "[ -d '" + path + "' ] && echo Y || echo N"
-            ).exec();
-            boolean exists =
-                !ex.getOut().isEmpty() && "Y".equals(ex.getOut().get(0));
-            if (!exists) {
+            if (!dirExists(path)) {
                 FixerLog.w(
                     "Refusing to create root-level folder on internal storage: " +
                         path
@@ -172,18 +174,10 @@ public class StorageFixer {
     // ========== CHECK IF NEEDS FIX ==========
 
     public static boolean needsFix(Context ctx, String pkg) {
-        if (isLegacyStorageApp(ctx, pkg)) {
-            String customDir = getCustomDirName(pkg);
-            String customPath = "/data/media/0/" + customDir;
-            Shell.Result exists = Shell.cmd(
-                "[ -d '" + customPath + "' ] && echo Y || echo N"
-            ).exec();
-            if (
-                exists.getOut().isEmpty() || "N".equals(exists.getOut().get(0))
-            ) {
-                return true;
-            }
-        }
+        // NOTE: the legacy custom dir (/data/media/0/<name>) is deliberately
+        // NOT part of this check. It can never be created (safeMkdir refuses
+        // root-level folders), so treating it as missing-work would mark every
+        // legacy app broken on every scan and re-fix + force-stop it forever.
 
         for (String type : DIR_TYPES) {
             String lowerPath = LOWER + "/" + type + "/" + pkg;
@@ -334,11 +328,12 @@ public class StorageFixer {
                     " android.permission.WRITE_EXTERNAL_STORAGE 2>/dev/null"
             ).exec();
 
-            // Permission the custom legacy directory (lower FS path).
-            // safeMkdir won't create it at storage root — only permission if present.
+            // Permission the custom legacy directory (lower FS path) if the app
+            // already created it. Never created here — the name is only guessed
+            // from the package name, and root-level folders are off limits anyway.
             String customDir = getCustomDirName(pkg);
             String customPath = "/data/media/0/" + customDir;
-            if (safeMkdir(customPath)) {
+            if (dirExists(customPath)) {
                 Shell.cmd("chown " + owner + " " + customPath).exec();
                 Shell.cmd("chmod 777 " + customPath).exec();
                 Shell.cmd(
@@ -349,9 +344,9 @@ public class StorageFixer {
             }
 
             // Ensure /sdcard/Download/ is fully writeable (lower FS path is /data/media/0/Download).
-            // Standard folder — normally already exists; safeMkdir won't create it fresh.
+            // Standard folder — permission it when present, never create it.
             String downloadPath = "/data/media/0/Download";
-            if (safeMkdir(downloadPath)) {
+            if (dirExists(downloadPath)) {
                 Shell.cmd("chmod 777 " + downloadPath).exec();
                 Shell.cmd(
                     "chcon u:object_r:media_rw_data_file:s0 " +
